@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard Google Sheets - Detección de Duplicados</title>
+    <!-- Bootstrap 5 y Chart.js desde CDN -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg: #f4f6f9;
+            --card-bg: #ffffff;
+            --text: #212529;
+        }
+        body {
+            background-color: var(--bg);
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        .dashboard-header {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 2rem 0;
+            margin-bottom: 2rem;
+            border-radius: 0 0 1rem 1rem;
+        }
+        .card-custom {
+            background: var(--card-bg);
+            border-radius: 1rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+            border: none;
+            transition: transform 0.2s;
+        }
+        .card-custom:hover {
+            transform: translateY(-2px);
+        }
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+        .table-responsive {
+            max-height: 400px;
+            overflow: auto;
+        }
+        .duplicate-badge {
+            background-color: #dc3545;
+            color: white;
+            border-radius: 50px;
+            padding: 0.2rem 0.8rem;
+            font-size: 0.85rem;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+            width: 100%;
+        }
+        .info-banner {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-header text-center">
+    <h1 class="fw-bold">📊 Dashboard de Datos</h1>
+    <p class="mb-0 opacity-75">Conectado a Google Sheets · Detección de duplicados y resúmenes</p>
+</div>
+
+<div class="container">
+    <!-- Banner informativo -->
+    <div class="info-banner" id="statusBanner">
+        <strong>⏳ Cargando datos...</strong> Conectando con la hoja de cálculo.
+    </div>
+
+    <!-- Resumen general -->
+    <div class="row g-4 mb-4" id="summaryCards">
+        <div class="col-md-3">
+            <div class="card card-custom p-3 text-center">
+                <h6 class="text-muted">Filas</h6>
+                <div class="stat-number" id="totalRows">-</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-custom p-3 text-center">
+                <h6 class="text-muted">Columnas</h6>
+                <div class="stat-number" id="totalCols">-</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-custom p-3 text-center">
+                <h6 class="text-muted">Columnas con duplicados</h6>
+                <div class="stat-number" id="dupCols">-</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card card-custom p-3 text-center">
+                <h6 class="text-muted">Total registros duplicados</h6>
+                <div class="stat-number" id="totalDupRecords">-</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Selección de columna y detalle de duplicados -->
+    <div class="row g-4 mb-4">
+        <div class="col-lg-6">
+            <div class="card card-custom p-4">
+                <h5 class="mb-3">🔍 Analizar columna</h5>
+                <select id="columnSelect" class="form-select form-select-lg mb-3">
+                    <option value="">-- Selecciona una columna --</option>
+                </select>
+                <div id="columnStats" class="mt-3">
+                    <p><strong>Valores únicos:</strong> <span id="uniqueCount">-</span></p>
+                    <p><strong>Valores duplicados:</strong> <span id="dupCount">-</span></p>
+                </div>
+                <div id="duplicatesList" class="mt-3"></div>
+            </div>
+        </div>
+        <div class="col-lg-6">
+            <div class="card card-custom p-4">
+                <h5 class="mb-3">📈 Distribución de valores (Top 10)</h5>
+                <div class="chart-container">
+                    <canvas id="freqChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabla de datos completa -->
+    <div class="card card-custom p-4 mb-4">
+        <h5 class="mb-3">📋 Vista previa de los datos</h5>
+        <div class="table-responsive" id="dataTableContainer">
+            <p class="text-muted">Cargando tabla...</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function() {
+        // ID de tu hoja de cálculo (extraído del enlace proporcionado)
+        const SHEET_ID = '19GhnCJThzGtnV33KOZV1uOW_zT539BZ4Dd2zLNdVCYI';
+        const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv`;
+
+        let fullData = [];
+        let headers = [];
+        let currentChart = null;
+
+        // Elementos del DOM
+        const statusBanner = document.getElementById('statusBanner');
+        const totalRowsEl = document.getElementById('totalRows');
+        const totalColsEl = document.getElementById('totalCols');
+        const dupColsEl = document.getElementById('dupCols');
+        const totalDupRecordsEl = document.getElementById('totalDupRecords');
+        const columnSelect = document.getElementById('columnSelect');
+        const uniqueCountEl = document.getElementById('uniqueCount');
+        const dupCountEl = document.getElementById('dupCount');
+        const duplicatesListEl = document.getElementById('duplicatesList');
+        const dataTableContainer = document.getElementById('dataTableContainer');
+        const freqChartCanvas = document.getElementById('freqChart');
+
+        // Parser de CSV robusto (maneja comillas y saltos de línea)
+        function parseCSV(csvText) {
+            const rows = [];
+            let currentRow = [];
+            let currentField = '';
+            let insideQuotes = false;
+            for (let i = 0; i < csvText.length; i++) {
+                const char = csvText[i];
+                const nextChar = csvText[i + 1];
+                if (insideQuotes) {
+                    if (char === '"' && nextChar === '"') {
+                        currentField += '"';
+                        i++; // saltar siguiente comilla
+                    } else if (char === '"') {
+                        insideQuotes = false;
+                    } else {
+                        currentField += char;
+                    }
+                } else {
+                    if (char === '"') {
+                        insideQuotes = true;
+                    } else if (char === ',') {
+                        currentRow.push(currentField.trim());
+                        currentField = '';
+                    } else if (char === '\n' || (char === '\r' && nextChar === '\n')) {
+                        if (char === '\r') i++; // saltar \n en \r\n
+                        currentRow.push(currentField.trim());
+                        rows.push(currentRow);
+                        currentRow = [];
+                        currentField = '';
+                    } else if (char === '\r') {
+                        currentRow.push(currentField.trim());
+                        rows.push(currentRow);
+                        currentRow = [];
+                        currentField = '';
+                    } else {
+                        currentField += char;
+                    }
+                }
+            }
+            // Agregar último campo y fila si no terminaron en newline
+            if (currentField || currentRow.length > 0) {
+                currentRow.push(currentField.trim());
+                rows.push(currentRow);
+            }
+            // Filtrar filas vacías
+            return rows.filter(row => row.length > 0 && !(row.length === 1 && row[0] === ''));
+        }
+
+        // Actualizar resumen general
+        function updateSummaryStats() {
+            totalRowsEl.textContent = fullData.length;
+            totalColsEl.textContent = headers.length;
+
+            // Contar columnas con duplicados
+            let dupColumnsCount = 0;
+            let totalDupRecords = 0;
+            const dupValuesMap = {}; // guardamos para después si se necesita
+            headers.forEach(header => {
+                const values = fullData.map(row => row[header]);
+                const freq = {};
+                values.forEach(v => { freq[v] = (freq[v] || 0) + 1; });
+                const duplicates = Object.entries(freq).filter(([val, count]) => count > 1);
+                if (duplicates.length > 0) {
+                    dupColumnsCount++;
+                    totalDupRecords += duplicates.reduce((sum, [_, count]) => sum + count, 0);
+                }
+            });
+            dupColsEl.textContent = dupColumnsCount;
+            totalDupRecordsEl.textContent = totalDupRecords;
+        }
+
+        // Llenar el dropdown de columnas
+        function populateColumnSelect() {
+            columnSelect.innerHTML = '<option value="">-- Selecciona una columna --</option>';
+            headers.forEach(header => {
+                const option = document.createElement('option');
+                option.value = header;
+                option.textContent = header;
+                columnSelect.appendChild(option);
+            });
+        }
+
+        // Construir tabla de datos
+        function renderDataTable() {
+            if (fullData.length === 0) {
+                dataTableContainer.innerHTML = '<p class="text-muted">No hay datos para mostrar.</p>';
+                return;
+            }
+            let html = '<table class="table table-striped table-hover"><thead><tr>';
+            headers.forEach(h => html += `<th>${h}</th>`);
+            html += '</tr></thead><tbody>';
+            fullData.forEach(row => {
+                html += '<tr>';
+                headers.forEach(h => {
+                    let val = row[h] !== undefined ? row[h] : '';
+                    html += `<td>${val}</td>`;
+                });
+                html += '</tr>';
+            });
+            html += '</tbody></table>';
+            dataTableContainer.innerHTML = html;
+        }
+
+        // Analizar columna seleccionada
+        function analyzeColumn(columnName) {
+            if (!columnName || !fullData.length) return;
+            const values = fullData.map(row => row[columnName]);
+            const freq = {};
+            values.forEach(v => { freq[v] = (freq[v] || 0) + 1; });
+            const uniqueValues = Object.keys(freq);
+            const duplicates = Object.entries(freq).filter(([_, count]) => count > 1);
+            
+            uniqueCountEl.textContent = uniqueValues.length;
+            dupCountEl.textContent = duplicates.length === 0 ? '0 (sin duplicados)' : duplicates.length;
+
+            // Mostrar lista de duplicados
+            if (duplicates.length === 0) {
+                duplicatesListEl.innerHTML = '<div class="alert alert-success">✅ No se encontraron valores duplicados en esta columna.</div>';
+            } else {
+                let dupHtml = '<h6>🔁 Valores duplicados:</h6><ul class="list-group">';
+                duplicates.sort((a, b) => b[1] - a[1]).forEach(([val, count]) => {
+                    dupHtml += `<li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span title="${val}">${val.length > 40 ? val.substring(0,40)+'...' : val}</span>
+                        <span class="duplicate-badge">${count} ocurrencias</span>
+                    </li>`;
+                });
+                dupHtml += '</ul>';
+                duplicatesListEl.innerHTML = dupHtml;
+            }
+
+            // Gráfico de frecuencia (top 10)
+            renderFrequencyChart(freq, columnName);
+        }
+
+        function renderFrequencyChart(freq, columnName) {
+            if (currentChart) currentChart.destroy();
+            const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 10);
+            if (sorted.length === 0) {
+                const ctx = freqChartCanvas.getContext('2d');
+                ctx.clearRect(0, 0, freqChartCanvas.width, freqChartCanvas.height);
+                return;
+            }
+            const labels = sorted.map(([val]) => val.length > 20 ? val.substring(0,20)+'…' : val);
+            const data = sorted.map(([_, count]) => count);
+            currentChart = new Chart(freqChartCanvas, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: `Frecuencia en "${columnName}"`,
+                        data: data,
+                        backgroundColor: 'rgba(42, 82, 152, 0.7)',
+                        borderColor: '#2a5298',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: { precision: 0 }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Evento cambio de columna
+        columnSelect.addEventListener('change', (e) => {
+            analyzeColumn(e.target.value);
+        });
+
+        // Cargar datos
+        async function loadData() {
+            try {
+                statusBanner.innerHTML = '<strong>⏳ Cargando datos...</strong> Conectando con Google Sheets. Asegúrate de que la hoja esté compartida como "Cualquiera con el enlace puede ver".';
+                const response = await fetch(CSV_URL);
+                if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                const csvText = await response.text();
+                const rows = parseCSV(csvText);
+                if (rows.length === 0) throw new Error('El CSV está vacío.');
+                headers = rows[0].map(h => h.trim());
+                fullData = rows.slice(1).map(row => {
+                    const obj = {};
+                    headers.forEach((h, idx) => {
+                        obj[h] = idx < row.length ? row[idx] : '';
+                    });
+                    return obj;
+                });
+                // Actualizar UI
+                updateSummaryStats();
+                populateColumnSelect();
+                renderDataTable();
+                statusBanner.innerHTML = '<strong>✅ Datos cargados correctamente.</strong> Selecciona una columna para analizar duplicados.';
+                statusBanner.className = 'info-banner';
+                statusBanner.style.backgroundColor = '#d4edda';
+                statusBanner.style.borderLeftColor = '#28a745';
+            } catch (error) {
+                console.error(error);
+                statusBanner.innerHTML = `<strong>❌ Error al cargar datos:</strong> ${error.message}. <br>Verifica que el ID de la hoja sea correcto y que el archivo esté compartido como "Cualquiera con el enlace puede ver".`;
+                statusBanner.style.backgroundColor = '#f8d7da';
+                statusBanner.style.borderLeftColor = '#dc3545';
+            }
+        }
+
+        // Iniciar
+        loadData();
+    })();
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
