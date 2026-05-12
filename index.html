@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard OCS - DATOSOCS.csv</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        * { box-sizing: border-box; font-family: 'Segoe UI', Roboto, sans-serif; }
+        body { background: #eef2f7; margin: 0; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { color: #1e466e; border-left: 6px solid #2a86d4; padding-left: 18px; margin-top: 0; }
+        .barra { background: white; border-radius: 40px; padding: 10px 20px; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px,1fr)); gap: 18px; margin-bottom: 30px; }
+        .card { background: white; border-radius: 18px; padding: 12px 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); border-top: 4px solid #2a86d4; }
+        .card h4 { margin: 0 0 6px 0; color: #5a6874; font-weight: 500; font-size: 0.85rem; }
+        .numero { font-size: 28px; font-weight: 800; color: #1e466e; }
+        .graficos { display: flex; flex-wrap: wrap; gap: 25px; margin-bottom: 35px; }
+        .grafico-caja { flex: 1; min-width: 280px; background: white; border-radius: 20px; padding: 15px 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+        canvas { max-height: 280px; width: 100%; }
+        .tabla-wrapper { background: white; border-radius: 20px; padding: 15px; overflow-x: auto; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { border: 1px solid #dee2e6; padding: 8px 10px; text-align: left; vertical-align: top; }
+        th { background: #f1f5f9; font-weight: 600; }
+        .loading { text-align: center; padding: 40px; color: #6c757d; }
+        .error { background: #fff1cf; border-left: 5px solid #f4b942; padding: 12px 16px; margin-bottom: 20px; font-size: 13px; white-space: pre-wrap; font-family: monospace; border-radius: 12px; }
+        button { background: #2a86d4; border: none; color: white; padding: 6px 18px; border-radius: 40px; cursor: pointer; font-weight: bold; transition: 0.2s; }
+        button:hover { background: #1c5a8c; }
+        footer { text-align: center; margin-top: 30px; font-size: 12px; color: #6c757d; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🖥️ Dashboard OCS Inventory</h1>
+    <div class="barra">
+        <span>🔗 Fuente: <strong>DATOSOCS.csv</strong> (actualización automática cada 30 segundos)</span>
+        <span id="timestamp" style="background:#e9ecef; padding:4px 12px; border-radius:20px; font-size:13px;"></span>
+        <button onclick="cargarDatos()">🔄 Refrescar ahora</button>
+    </div>
+    <div id="errorPanel" class="error" style="display: none;"></div>
+    <div class="stats" id="statsArea"><div class="card">Cargando métricas...</div></div>
+    <div class="graficos">
+        <div class="grafico-caja"><h3>🖥️ Sistemas Operativos</h3><canvas id="chartOS"></canvas></div>
+        <div class="grafico-caja"><h3>📅 Equipos actualizados (últimos 7 días)</h3><canvas id="chartRecent"></canvas></div>
+    </div>
+    <div class="tabla-wrapper">
+        <h3>📋 Listado de equipos</h3>
+        <div id="tablaDinamica"><div class="loading">⬇️ Descargando datos desde GitHub...</div></div>
+    </div>
+    <footer>📌 Los cambios en el archivo DATOSOCS.csv se reflejarán automáticamente en el dashboard cada 30 segundos.</footer>
+</div>
+
+<script>
+    const CSV_URL = 'https://raw.githubusercontent.com/racieldtar-debug/OCS/refs/heads/main/DATOSOCS.csv';
+    let chartOS, chartRecent;
+
+    function mostrarError(mensaje) {
+        document.getElementById('errorPanel').innerHTML = `
+            <strong>⚠️ Error al cargar datos</strong><br>
+            ${mensaje.replace(/\n/g, '<br>')}<br><br>
+            🔧 Verifica que el archivo DATOSOCS.csv esté en la raíz del repositorio y sea accesible.
+        `;
+        document.getElementById('errorPanel').style.display = 'block';
+        document.getElementById('statsArea').innerHTML = `<div class="card" style="border-top-color:#dc3545;"><h4>Error de conexión</h4><div class="numero">No se pudo cargar</div></div>`;
+        document.getElementById('tablaDinamica').innerHTML = `<div class="loading">❌ No se pudieron cargar los datos. Revisa el panel de error.</div>`;
+    }
+
+    async function cargarDatos() {
+        document.getElementById('timestamp').innerText = `🕒 ${new Date().toLocaleTimeString()}`;
+        document.getElementById('errorPanel').style.display = 'none';
+
+        try {
+            const url = `${CSV_URL}?nocache=${Date.now()}`;
+            const respuesta = await fetch(url);
+            if (!respuesta.ok) throw new Error(`HTTP ${respuesta.status}: ${respuesta.statusText}`);
+            const textoCSV = await respuesta.text();
+
+            // Usar PapaParse con delimitador auto-detectado
+            const resultado = Papa.parse(textoCSV, {
+                delimiter: ";",            // Forzar punto y coma
+                header: true,
+                skipEmptyLines: true,
+                transformHeader: h => h.trim()
+            });
+
+            if (resultado.errors.length) {
+                console.warn("Errores de parseo:", resultado.errors);
+            }
+
+            let datosRaw = resultado.data;
+            if (!datosRaw || datosRaw.length === 0) throw new Error("El archivo CSV está vacío o no se pudo leer.");
+            datosRaw = datosRaw.filter(row => Object.values(row).some(v => v && v.trim() !== ""));
+
+            // Mapeo de columnas
+            const colTAG = 'TAG';
+            const colDispositivo = 'Dispositivo';
+            const colUsuario = 'Nombre usuario';
+            const colSO = 'Sistema Operativo';
+            const colFecha = 'Último inventario';
+            const colIP = 'Dirección IP';
+
+            const datos = datosRaw.map(row => ({
+                tag: row[colTAG] || '',
+                dispositivo: row[colDispositivo] || '',
+                usuario: row[colUsuario] || '',
+                so: row[colSO] || '',
+                ultimoInventario: row[colFecha] || '',
+                ip: row[colIP] || ''
+            }));
+
+            if (datos.length === 0) throw new Error("No hay datos después del procesamiento.");
+
+            actualizarTarjetas(datos);
+            actualizarGraficoSO(datos);
+            actualizarGraficoRecientes(datos);
+            actualizarTabla(datos);
+
+        } catch (error) {
+            console.error(error);
+            mostrarError(error.message);
+        }
+    }
+
+    function actualizarTarjetas(datos) {
+        const total = datos.length;
+        const conUsuario = datos.filter(d => d.usuario && d.usuario.trim().length > 0).length;
+        const windows = datos.filter(d => d.so && d.so.toLowerCase().includes('windows')).length;
+        const linux = datos.filter(d => d.so && (d.so.toLowerCase().includes('linux') || d.so.toLowerCase().includes('debian'))).length;
+        document.getElementById('statsArea').innerHTML = `
+            <div class="card"><h4>🖥️ Total equipos</h4><div class="numero">${total}</div></div>
+            <div class="card"><h4>👤 Usuarios asignados</h4><div class="numero">${conUsuario}</div></div>
+            <div class="card"><h4>🪟 Windows</h4><div class="numero">${windows}</div></div>
+            <div class="card"><h4>🐧 Linux / Debian</h4><div class="numero">${linux}</div></div>
+        `;
+    }
+
+    function actualizarGraficoSO(datos) {
+        const conteo = {};
+        datos.forEach(d => {
+            let so = d.so.trim();
+            if (so === "") so = "No especificado";
+            if (so.toLowerCase().includes('windows 10')) so = "Windows 10";
+            else if (so.toLowerCase().includes('windows 11')) so = "Windows 11";
+            else if (so.toLowerCase().includes('windows server')) so = "Windows Server";
+            else if (so.toLowerCase().includes('debian')) so = "Debian";
+            else if (so.toLowerCase().includes('ubuntu')) so = "Ubuntu";
+            else if (so.toLowerCase().includes('linux')) so = "Otras distros Linux";
+            conteo[so] = (conteo[so] || 0) + 1;
+        });
+        const ordenado = Object.entries(conteo).sort((a,b) => b[1] - a[1]);
+        const labels = ordenado.slice(0,6).map(x => x[0]);
+        const valores = ordenado.slice(0,6).map(x => x[1]);
+        const ctx = document.getElementById('chartOS').getContext('2d');
+        if (chartOS) chartOS.destroy();
+        chartOS = new Chart(ctx, {
+            type: 'bar',
+            data: { labels, datasets: [{ label: 'Equipos', data: valores, backgroundColor: '#3b82f6', borderRadius: 8 }] },
+            options: { responsive: true, maintainAspectRatio: true }
+        });
+    }
+
+    function actualizarGraficoRecientes(datos) {
+        const hoy = new Date();
+        const hace7Dias = new Date();
+        hace7Dias.setDate(hoy.getDate() - 7);
+        const recientes = datos.filter(d => {
+            if (!d.ultimoInventario) return false;
+            let fechaStr = d.ultimoInventario.split(' ')[0];
+            let fecha = new Date(fechaStr);
+            return !isNaN(fecha) && fecha >= hace7Dias;
+        }).sort((a,b) => new Date(b.ultimoInventario) - new Date(a.ultimoInventario)).slice(0,8);
+        
+        const labels = recientes.map(d => {
+            let nombre = d.dispositivo || d.tag;
+            return nombre.length > 18 ? nombre.slice(0,15)+'…' : nombre;
+        });
+        const ctx = document.getElementById('chartRecent').getContext('2d');
+        if (chartRecent) chartRecent.destroy();
+        chartRecent = new Chart(ctx, {
+            type: 'bar',
+            data: { labels, datasets: [{ label: 'Última semana', data: labels.map(() => 1), backgroundColor: '#f97316', borderRadius: 6 }] },
+            options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } } }
+        });
+    }
+
+    function actualizarTabla(datos) {
+        const maxFilas = 300;
+        const subset = datos.slice(0, maxFilas);
+        let html = `<div style="max-height: 550px; overflow-y: auto;"><table><thead><tr><th>TAG</th><th>Dispositivo</th><th>Usuario</th><th>Sistema Operativo</th><th>Último inventario</th><th>IP</th></tr></thead><tbody>`;
+        subset.forEach(f => {
+            html += `<tr>
+                        <td>${escapeHtml(f.tag)}</td>
+                        <td>${escapeHtml(f.dispositivo)}</td>
+                        <td>${escapeHtml(f.usuario)}</td>
+                        <td>${escapeHtml(f.so)}</td>
+                        <td>${escapeHtml(f.ultimoInventario)}</td>
+                        <td>${escapeHtml(f.ip)}</td>
+                     </tr>`;
+        });
+        if (datos.length > maxFilas) html += `<tr><td colspan="6">📌 Mostrando ${maxFilas} de ${datos.length} equipos totales</td></tr>`;
+        html += `</tbody></table></div>`;
+        document.getElementById('tablaDinamica').innerHTML = html;
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+
+    // Inicializar y refrescar cada 30 segundos
+    cargarDatos();
+    setInterval(cargarDatos, 30000);
+</script>
+</body>
+</html>
