@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCS Dashboard Interactivo</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        body { background: #f8fafc; padding: 2rem; color: #0f172a; }
+        .dashboard { max-width: 1600px; margin: 0 auto; }
+        h1 { font-size: 2rem; font-weight: 600; margin-bottom: 0.5rem; letter-spacing: -0.01em; }
+        .sub { color: #475569; margin-bottom: 2rem; border-left: 4px solid #10b981; padding-left: 1rem; }
+        
+        /* Tarjetas de estadísticas */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+        .stat-card { background: white; border-radius: 1.5rem; padding: 1.5rem; box-shadow: 0 1px 3px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; transition: all 0.2s; }
+        .stat-card:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(0,0,0,0.05); }
+        .stat-card .label { font-size: 0.875rem; font-weight: 500; color: #64748b; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .stat-card .value { font-size: 2.25rem; font-weight: 700; color: #0f172a; line-height: 1.2; margin-bottom: 0.25rem; }
+        .stat-card .trend { font-size: 0.75rem; color: #10b981; display: flex; align-items: center; gap: 0.25rem; }
+        
+        /* Gráficos */
+        .charts-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+        .chart-card { background: white; border-radius: 1.25rem; padding: 1.25rem; border: 1px solid #e2e8f0; }
+        .chart-card h3 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: #1e293b; }
+        canvas { max-height: 280px; width: 100%; }
+        
+        /* Barra de herramientas */
+        .toolbar { background: white; border-radius: 1rem; padding: 1rem; margin-bottom: 1.5rem; border: 1px solid #e2e8f0; display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
+        .filter-group { display: flex; flex-direction: column; gap: 0.25rem; min-width: 150px; }
+        .filter-group label { font-size: 0.7rem; font-weight: 600; text-transform: uppercase; color: #64748b; letter-spacing: 0.05em; }
+        .filter-group select, .filter-group input { padding: 0.5rem 0.75rem; border-radius: 0.5rem; border: 1px solid #cbd5e1; background: white; font-size: 0.875rem; outline: none; transition: 0.2s; }
+        .filter-group select:focus, .filter-group input:focus { border-color: #10b981; ring: 2px solid #10b981; }
+        .btn { background: #3b82f6; border: none; padding: 0.5rem 1rem; border-radius: 0.5rem; color: white; font-weight: 500; cursor: pointer; transition: 0.2s; }
+        .btn-secondary { background: white; border: 1px solid #cbd5e1; color: #475569; }
+        .btn-secondary:hover { background: #f1f5f9; border-color: #94a3b8; }
+        .btn-export { background: #10b981; }
+        .btn-export:hover { background: #059669; }
+        
+        /* Tabla interactiva */
+        .table-container { background: white; border-radius: 1rem; border: 1px solid #e2e8f0; overflow-x: auto; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+        table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+        th { background: #f8fafc; padding: 1rem 0.75rem; text-align: left; font-weight: 600; color: #1e293b; border-bottom: 1px solid #e2e8f0; cursor: pointer; user-select: none; }
+        th:hover { background: #f1f5f9; }
+        td { padding: 0.75rem; border-bottom: 1px solid #f1f5f9; color: #334155; }
+        tr:hover td { background: #f8fafc; }
+        .table-footer { padding: 1rem; text-align: center; font-size: 0.75rem; color: #64748b; border-top: 1px solid #e2e8f0; background: white; border-radius: 0 0 1rem 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+        
+        .refresh-bar { background: white; border-radius: 1rem; padding: 0.75rem 1rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; border: 1px solid #e2e8f0; }
+        .badge { background: #e2e8f0; padding: 0.25rem 0.75rem; border-radius: 2rem; font-size: 0.75rem; }
+        footer { text-align: center; margin-top: 2rem; font-size: 0.7rem; color: #64748b; }
+        @media (max-width: 768px) { body { padding: 1rem; } .stats-grid { grid-template-columns: 1fr; } .charts-row { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+<div class="dashboard">
+    <h1>📊 OCS Inventory Analytics</h1>
+    <div class="sub">Datos en tiempo real | Dashboard interactivo con filtros y ordenación</div>
+    
+    <div class="refresh-bar">
+        <div>🔄 Actualización automática cada 30 segundos</div>
+        <div><span id="timestamp" class="badge">--:--:--</span> <button onclick="cargarDatos()" class="btn btn-secondary" style="margin-left: 0.5rem;">⟳ Refrescar ahora</button></div>
+    </div>
+    
+    <div class="stats-grid" id="statsArea">Cargando estadísticas...</div>
+    
+    <div class="charts-row">
+        <div class="chart-card"><h3>📊 Distribución de Sistemas Operativos</h3><canvas id="chartOS"></canvas></div>
+        <div class="chart-card"><h3>🌐 Distribución de Direcciones IP (primeros octetos)</h3><canvas id="chartIP"></canvas></div>
+    </div>
+    
+    <div class="toolbar" id="toolbar">
+        <!-- Los filtros se generarán dinámicamente con JavaScript -->
+    </div>
+    
+    <div class="table-container">
+        <table id="dataTable">
+            <thead id="tableHeader"></thead>
+            <tbody id="tableBody"></tbody>
+        </table>
+        <div class="table-footer">
+            <div id="recordsInfo"></div>
+            <button id="exportCsvBtn" class="btn btn-export">📎 Exportar datos filtrados a CSV</button>
+        </div>
+    </div>
+    <footer>Fuente: OCS.csv (GitHub) · Los cambios se reflejan automáticamente</footer>
+</div>
+
+<script>
+    const CSV_URL = 'https://raw.githubusercontent.com/racieldtar-debug/OCS/refs/heads/main/OCS.csv';
+    let chartOS, chartIP;
+    let datosGlobales = [];
+    let datosFiltradosActuales = [];
+    let currentFilters = { tag: '', dispositivo: '', usuario: '', so: '', ip: '' };
+    let currentSort = { column: 'tag', direction: 'asc' };
+
+    async function cargarDatos() {
+        document.getElementById('timestamp').innerText = new Date().toLocaleTimeString();
+        try {
+            const url = `${CSV_URL}?nocache=${Date.now()}`;
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const text = await resp.text();
+            const result = Papa.parse(text, { delimiter: ";", header: true, skipEmptyLines: true });
+            let raw = result.data.filter(row => Object.values(row).some(v => v && v.trim()));
+            const items = raw.map(row => ({
+                tag: (row.TAG || '').trim(),
+                dispositivo: (row.Dispositivo || '').trim(),
+                usuario: (row["Nombre usuario"] || '').trim(),
+                so: (row["Sistema Operativo"] || '').trim(),
+                ultimoInventario: (row["Último inventario"] || '').trim(),
+                ip: (row["Dirección IP"] || '').trim()
+            }));
+            datosGlobales = items;
+            actualizarEstadisticas(items);
+            actualizarGraficoSO(items);
+            actualizarGraficoIP(items);
+            actualizarFiltros(items);
+            aplicarFiltrosYOrdenacion();
+        } catch(err) { console.error(err); document.getElementById('statsArea').innerHTML = `<div class="stat-card">Error: ${err.message}</div>`; }
+    }
+    
+    function actualizarEstadisticas(d) {
+        const total = d.length;
+        const conUsuario = d.filter(x => x.usuario && x.usuario.length > 0).length;
+        const windows = d.filter(x => x.so.toLowerCase().includes('windows')).length;
+        const linux = d.filter(x => x.so.toLowerCase().includes('linux') || x.so.toLowerCase().includes('debian')).length;
+        const hoy = new Date();
+        const hace7dias = new Date(hoy.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const equiposRecientes = d.filter(x => {
+            if (!x.ultimoInventario) return false;
+            let fecha = new Date(x.ultimoInventario.split(' ')[0]);
+            return !isNaN(fecha) && fecha >= hace7dias;
+        }).length;
+        document.getElementById('statsArea').innerHTML = `
+            <div class="stat-card"><div class="label">Total equipos</div><div class="value">${total}</div><div class="trend">Base de datos completa</div></div>
+            <div class="stat-card"><div class="label">Usuarios asignados</div><div class="value">${conUsuario}</div><div class="trend">${((conUsuario/total)*100).toFixed(1)}% del total</div></div>
+            <div class="stat-card"><div class="label">Windows</div><div class="value">${windows}</div><div class="trend"></div></div>
+            <div class="stat-card"><div class="label">Linux / Debian</div><div class="value">${linux}</div><div class="trend"></div></div>
+            <div class="stat-card"><div class="label">Activos última semana</div><div class="value">${equiposRecientes}</div><div class="trend">🟢 Equipos con inventario reciente</div></div>
+        `;
+    }
+    
+    function actualizarGraficoSO(d) {
+        const count = {};
+        d.forEach(i => {
+            let os = i.so || "No especificado";
+            if (os.includes("Windows 10")) os = "Windows 10";
+            else if (os.includes("Windows 11")) os = "Windows 11";
+            else if (os.includes("Debian")) os = "Debian";
+            else if (os.includes("Ubuntu")) os = "Ubuntu";
+            count[os] = (count[os] || 0) + 1;
+        });
+        const sorted = Object.entries(count).sort((a, b) => b[1] - a[1]).slice(0, 6);
+        if(chartOS) chartOS.destroy();
+        const ctx = document.getElementById('chartOS').getContext('2d');
+        chartOS = new Chart(ctx, { type: 'doughnut', data: { labels: sorted.map(x => x[0]), datasets: [{ data: sorted.map(x => x[1]), backgroundColor: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec489a'] }] }, options: { responsive: true, plugins: { legend: { position: 'bottom' } } } });
+    }
+    
+    function actualizarGraficoIP(d) {
+        const octetos = {};
+        d.forEach(i => {
+            if (i.ip) {
+                const primerOcteto = i.ip.split('.')[0];
+                if (primerOcteto) octetos[primerOcteto] = (octetos[primerOcteto] || 0) + 1;
+            }
+        });
+        const sorted = Object.entries(octetos).sort((a, b) => b[1] - a[1]);
+        if(chartIP) chartIP.destroy();
+        const ctx = document.getElementById('chartIP').getContext('2d');
+        chartIP = new Chart(ctx, { type: 'bar', data: { labels: sorted.map(x => x[0]), datasets: [{ label: 'Equipos', data: sorted.map(x => x[1]), backgroundColor: '#10b981' }] }, options: { responsive: true, plugins: { legend: { display: false } } } });
+    }
+    
+    function actualizarFiltros(d) {
+        const obtenerOpciones = (campo) => [...new Set(d.map(item => item[campo]).filter(v => v && v.length > 0))].sort();
+        const tags = obtenerOpciones('tag');
+        const dispositivos = obtenerOpciones('dispositivo');
+        const usuarios = obtenerOpciones('usuario');
+        const sos = obtenerOpciones('so');
+        const ips = obtenerOpciones('ip');
+        const toolbar = document.getElementById('toolbar');
+        toolbar.innerHTML = `
+            <div class="filter-group"><label>TAG</label><select id="filterTag"><option value="">Todos</option>${tags.map(v => `<option value="${v}">${v}</option>`).join('')}</select></div>
+            <div class="filter-group"><label>Dispositivo</label><select id="filterDispositivo"><option value="">Todos</option>${dispositivos.map(v => `<option value="${v}">${v}</option>`).join('')}</select></div>
+            <div class="filter-group"><label>Usuario</label><select id="filterUsuario"><option value="">Todos</option>${usuarios.map(v => `<option value="${v}">${v}</option>`).join('')}</select></div>
+            <div class="filter-group"><label>Sistema Operativo</label><select id="filterSO"><option value="">Todos</option>${sos.map(v => `<option value="${v}">${v}</option>`).join('')}</select></div>
+            <div class="filter-group"><label>IP</label><select id="filterIP"><option value="">Todos</option>${ips.map(v => `<option value="${v}">${v}</option>`).join('')}</select></div>
+            <div><button id="clearFilters" class="btn btn-secondary">✖️ Limpiar filtros</button></div>
+        `;
+        document.getElementById('filterTag').addEventListener('change', (e) => { currentFilters.tag = e.target.value; aplicarFiltrosYOrdenacion(); });
+        document.getElementById('filterDispositivo').addEventListener('change', (e) => { currentFilters.dispositivo = e.target.value; aplicarFiltrosYOrdenacion(); });
+        document.getElementById('filterUsuario').addEventListener('change', (e) => { currentFilters.usuario = e.target.value; aplicarFiltrosYOrdenacion(); });
+        document.getElementById('filterSO').addEventListener('change', (e) => { currentFilters.so = e.target.value; aplicarFiltrosYOrdenacion(); });
+        document.getElementById('filterIP').addEventListener('change', (e) => { currentFilters.ip = e.target.value; aplicarFiltrosYOrdenacion(); });
+        document.getElementById('clearFilters').addEventListener('click', limpiarFiltros);
+    }
+    
+    function limpiarFiltros() {
+        currentFilters = { tag: '', dispositivo: '', usuario: '', so: '', ip: '' };
+        if (document.getElementById('filterTag')) document.getElementById('filterTag').value = '';
+        if (document.getElementById('filterDispositivo')) document.getElementById('filterDispositivo').value = '';
+        if (document.getElementById('filterUsuario')) document.getElementById('filterUsuario').value = '';
+        if (document.getElementById('filterSO')) document.getElementById('filterSO').value = '';
+        if (document.getElementById('filterIP')) document.getElementById('filterIP').value = '';
+        aplicarFiltrosYOrdenacion();
+    }
+    
+    function aplicarFiltrosYOrdenacion() {
+        if (!datosGlobales.length) return;
+        let filtrados = datosGlobales.filter(item => {
+            return (currentFilters.tag === '' || item.tag === currentFilters.tag) &&
+                   (currentFilters.dispositivo === '' || item.dispositivo === currentFilters.dispositivo) &&
+                   (currentFilters.usuario === '' || item.usuario === currentFilters.usuario) &&
+                   (currentFilters.so === '' || item.so === currentFilters.so) &&
+                   (currentFilters.ip === '' || item.ip === currentFilters.ip);
+        });
+        filtrados.sort((a, b) => {
+            let valA = a[currentSort.column] || '';
+            let valB = b[currentSort.column] || '';
+            if (valA < valB) return currentSort.direction === 'asc' ? -1 : 1;
+            if (valA > valB) return currentSort.direction === 'asc' ? 1 : -1;
+            return 0;
+        });
+        datosFiltradosActuales = filtrados;
+        renderizarTabla(filtrados);
+    }
+    
+    function ordenarPor(columna) {
+        if (currentSort.column === columna) {
+            currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+            currentSort.column = columna;
+            currentSort.direction = 'asc';
+        }
+        aplicarFiltrosYOrdenacion();
+    }
+    
+    function renderizarTabla(datos) {
+        const thead = document.getElementById('tableHeader');
+        thead.innerHTML = `<tr>${['tag','dispositivo','usuario','so','ultimoInventario','ip'].map(col => `<th data-column="${col}">${col === 'tag' ? 'TAG' : col === 'dispositivo' ? 'Dispositivo' : col === 'usuario' ? 'Usuario' : col === 'so' ? 'S.O.' : col === 'ultimoInventario' ? 'Último inventario' : 'IP'} ${currentSort.column === col ? (currentSort.direction === 'asc' ? '▲' : '▼') : ''}</th>`).join('')}</tr>`;
+        document.querySelectorAll('#tableHeader th').forEach(th => {
+            th.addEventListener('click', () => ordenarPor(th.dataset.column));
+        });
+        const tbody = document.getElementById('tableBody');
+        tbody.innerHTML = datos.slice(0, 1000).map(item => `<tr><td>${escapeHtml(item.tag)}</td><td>${escapeHtml(item.dispositivo)}</td><td>${escapeHtml(item.usuario)}</td><td>${escapeHtml(item.so)}</td><td>${escapeHtml(item.ultimoInventario)}</td><td>${escapeHtml(item.ip)}</td></tr>`).join('');
+        document.getElementById('recordsInfo').innerHTML = `Mostrando ${datos.length} registros (filtrados de ${datosGlobales.length} totales)`;
+    }
+    
+    function exportarCSV() {
+        if (!datosFiltradosActuales.length) { alert('No hay datos para exportar'); return; }
+        const columnas = ['tag', 'dispositivo', 'usuario', 'so', 'ultimoInventario', 'ip'];
+        const cabeceras = ['TAG', 'Dispositivo', 'Usuario', 'Sistema Operativo', 'Último inventario', 'IP'];
+        const filas = datosFiltradosActuales.map(item => columnas.map(col => `"${(item[col] || '').replace(/"/g, '""')}"`).join(','));
+        const csv = [cabeceras.join(','), ...filas].join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.href = url;
+        link.setAttribute('download', `ocs_export_${new Date().toISOString().slice(0,19)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    function escapeHtml(str) { if(!str) return ''; return str.replace(/[&<>]/g, function(m) { if(m === '&') return '&amp;'; if(m === '<') return '&lt;'; if(m === '>') return '&gt;'; return m; }); }
+
+    document.getElementById('exportCsvBtn').addEventListener('click', exportarCSV);
+    cargarDatos();
+    setInterval(cargarDatos, 30000);
+</script>
+</body>
+</html>
