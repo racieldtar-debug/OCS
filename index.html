@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OCS Dashboard - Con Backup Histórico en GitHub</title>
+    <title>OCS Dashboard - Backup y Seguridad</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <style>
+        /* Estilos igual que antes (no repetiré todo por brevedad, pero incluyo los mismos) */
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Roboto, sans-serif; }
         body { background: #eef2f7; padding: 24px; position: relative; }
         .container { max-width: 1400px; margin: 0 auto; }
@@ -26,25 +27,43 @@
         .btn { background: #3b82f6; border: none; padding: 0.5rem 1rem; border-radius: 0.5rem; color: white; cursor: pointer; }
         .btn-secondary { background: white; border: 1px solid #cbd5e1; color: #475569; }
         .btn-duplicados { background: #f97316; }
-        .btn-backup { background: #10b981; }
+        .btn-backup { background: #10b981; width: 100%; margin-bottom: 15px; }
         .table-container { background: white; border-radius: 1rem; overflow-x: auto; }
         table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
         th, td { padding: 0.75rem; border-bottom: 1px solid #e2e8f0; text-align: left; }
         th { background: #f8fafc; cursor: pointer; }
         .badge { background: #e2e8f0; padding: 4px 12px; border-radius: 40px; font-size: 0.75rem; }
-        .panel-backup { position: fixed; right: 0; top: 0; width: 320px; height: 100%; background: white; box-shadow: -5px 0 15px rgba(0,0,0,0.1); transform: translateX(100%); transition: 0.3s; z-index: 1001; padding: 20px; overflow-y: auto; }
+        .panel-backup { position: fixed; right: 0; top: 0; width: 350px; height: 100%; background: white; box-shadow: -5px 0 15px rgba(0,0,0,0.1); transform: translateX(100%); transition: 0.3s; z-index: 1001; padding: 20px; overflow-y: auto; }
         .panel-backup.open { transform: translateX(0); }
         .panel-toggle { position: fixed; right: 20px; bottom: 20px; background: #10b981; border: none; border-radius: 50px; padding: 12px 20px; color: white; font-weight: bold; cursor: pointer; z-index: 1002; box-shadow: 0 2px 10px rgba(0,0,0,0.2); }
         .backup-item { background: #f1f5f9; margin: 10px 0; padding: 10px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; }
         .backup-item button { background: none; border: none; color: #3b82f6; cursor: pointer; margin-left: 8px; }
         footer { text-align: center; margin-top: 32px; font-size: 0.75rem; color: #6c757d; }
         .aviso-backup { background: #fef3c7; border-left: 4px solid #f59e0b; padding: 8px 12px; margin-bottom: 15px; display: none; }
+        .login-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.8); display: flex; justify-content: center; align-items: center; z-index: 2000; }
+        .login-box { background: white; padding: 30px; border-radius: 20px; width: 300px; text-align: center; }
+        .login-box input { width: 100%; margin: 10px 0; padding: 10px; border-radius: 8px; border: 1px solid #ccc; }
+        .login-box button { width: 100%; padding: 10px; background: #3b82f6; color: white; border: none; border-radius: 8px; cursor: pointer; }
+        .error-msg { color: red; margin-top: 10px; display: none; }
     </style>
 </head>
 <body>
+<!-- Pantalla de login (se ocultará tras autenticación) -->
+<div id="loginOverlay" class="login-overlay">
+    <div class="login-box">
+        <h2>🔐 Acceso restringido</h2>
+        <input type="text" id="loginUser" placeholder="Usuario">
+        <input type="password" id="loginPass" placeholder="Contraseña">
+        <button id="loginBtn">Ingresar</button>
+        <div id="loginError" class="error-msg">Usuario o contraseña incorrectos</div>
+    </div>
+</div>
+
+<!-- Contenido principal del dashboard (oculto hasta login) -->
+<div id="dashboardContent" style="display: none;">
 <div class="container">
-    <h1>📊 OCS Dashboard con Backup Histórico</h1>
-    <div class="sub">Datos actuales + copias semanales automáticas en GitHub</div>
+    <h1>📊 OCS Dashboard con Backup Manual + Automático</h1>
+    <div class="sub">Datos actuales + copias semanales automáticas + guardado manual</div>
     
     <div class="refresh-bar">
         <div>🔄 Auto-refresh cada 30s</div>
@@ -72,37 +91,74 @@
             <button id="exportCsvBtn" class="btn btn-export" style="background:#10b981;">📎 Exportar CSV</button>
         </div>
     </div>
-    <footer>Los datos actuales se actualizan cada 30s desde OCS.csv. Los backups semanales se crean automáticamente en la carpeta backups/ del repositorio.</footer>
+    <footer>Los datos actuales se actualizan cada 30s desde OCS.csv. Los backups se guardan en la carpeta backups/ del repositorio.</footer>
 </div>
 
 <button class="panel-toggle" id="togglePanelBtn">📆 Backup históricos</button>
 <div id="panelBackup" class="panel-backup">
-    <h3>🗂️ Copias de seguridad semanales</h3>
-    <p style="font-size:12px;">Estos archivos se crean automáticamente cada lunes.</p>
+    <h3>🗂️ Copias de seguridad</h3>
+    <button id="manualBackupBtn" class="btn btn-backup">💾 Guardar backup manual (datos actuales)</button>
     <div id="listaBackups">Cargando lista...</div>
+    <p style="font-size:12px; margin-top:15px;">Los backups automáticos se crean cada lunes.<br>Para guardar manualmente necesitas un <a href="#" id="tokenInfoLink">token de GitHub</a>.</p>
 </div>
 
 <!-- Modal duplicados (simplificado) -->
 <div id="modalDuplicados" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); justify-content:center; align-items:center; z-index:1100;"><div style="background:white; border-radius:28px; max-width:90%; width:800px; max-height:85vh; overflow:auto; padding:24px;"><div style="display:flex; justify-content:space-between;"><h2>🔎 Duplicados</h2><button onclick="cerrarModal()" style="background:none; border:none; font-size:24px;">&times;</button></div><div id="columnasCheckbox" class="column-selector" style="display:flex; gap:15px; margin:15px 0;"></div><button id="btnDetectar" class="btn btn-duplicados">Detectar</button><div id="resultadoDuplicados"></div></div></div>
+</div>
 
 <script>
-    // --------------------------------------------------------------
-    // CONFIGURACIÓN
-    // --------------------------------------------------------------
-    const CSV_URL_ACTUAL = 'https://raw.githubusercontent.com/racieldtar-debug/OCS/refs/heads/main/OCS.csv';
-    const REPO_API = 'https://api.github.com/repos/racieldtar-debug/OCS/contents/backups';
+    // --- CONFIGURACIÓN DE SEGURIDAD ---
+    // Cambia aquí el usuario y contraseña que desees
+    const VALID_USER = "admin";
+    const VALID_PASS = "ocs2026";  // Personalízalo
+    // ---------------------------------
+
+    // Autenticación
+    function verificarAutenticacion() {
+        const auth = sessionStorage.getItem('dashboard_auth');
+        if (auth === 'true') {
+            document.getElementById('loginOverlay').style.display = 'none';
+            document.getElementById('dashboardContent').style.display = 'block';
+            iniciarDashboard();
+            return true;
+        }
+        return false;
+    }
+
+    document.getElementById('loginBtn').addEventListener('click', () => {
+        const user = document.getElementById('loginUser').value;
+        const pass = document.getElementById('loginPass').value;
+        if (user === VALID_USER && pass === VALID_PASS) {
+            sessionStorage.setItem('dashboard_auth', 'true');
+            document.getElementById('loginOverlay').style.display = 'none';
+            document.getElementById('dashboardContent').style.display = 'block';
+            iniciarDashboard();
+        } else {
+            document.getElementById('loginError').style.display = 'block';
+        }
+    });
+
+    // Si ya estaba autenticado
+    if (!verificarAutenticacion()) {
+        // Esperar a que el usuario haga login
+    }
+
+    // --- TODAS LAS FUNCIONES DEL DASHBOARD (igual que antes) ---
     let chartOS, chartRecent;
-    let datosGlobales = [];      // Datos actualmente mostrados (actuales o backup)
-    let datosActuales = [];      // Últimos datos descargados del CSV actual
-    let modoBackup = false;      // Si estamos viendo un backup
+    let datosGlobales = [];
+    let datosActuales = [];
+    let modoBackup = false;
     let datosFiltradosActuales = [];
     let currentFilters = { tag: '', dispositivo: '', usuario: '', so: '', ip: '' };
     let currentSort = { column: 'tag', direction: 'asc' };
     let busquedaGlobal = '';
 
-    // --------------------------------------------------------------
-    // CARGAR DATOS ACTUALES (desde OCS.csv)
-    // --------------------------------------------------------------
+    const CSV_URL_ACTUAL = 'https://raw.githubusercontent.com/racieldtar-debug/OCS/refs/heads/main/OCS.csv';
+    const REPO_API = 'https://api.github.com/repos/racieldtar-debug/OCS/contents/backups';
+    const OWNER = 'racieldtar-debug';
+    const REPO = 'OCS';
+    let githubToken = localStorage.getItem('github_token');
+
     async function cargarDatosActuales() {
         document.getElementById('timestamp').innerText = new Date().toLocaleTimeString();
         try {
@@ -124,7 +180,6 @@
                 datosGlobales = [...datosActuales];
                 actualizarTodoDashboard();
             }
-            // Ocultar aviso si estábamos en backup
             document.getElementById('avisoBackup').style.display = 'none';
             modoBackup = false;
         } catch (err) {
@@ -133,11 +188,8 @@
         }
     }
 
-    // --------------------------------------------------------------
-    // CARGAR UN BACKUP ESPECÍFICO (desde la carpeta backups/)
-    // --------------------------------------------------------------
     async function cargarBackup(nombreArchivo) {
-        const backupUrl = `https://raw.githubusercontent.com/racieldtar-debug/OCS/main/backups/${nombreArchivo}`;
+        const backupUrl = `https://raw.githubusercontent.com/${OWNER}/${REPO}/main/backups/${nombreArchivo}`;
         try {
             const resp = await fetch(`${backupUrl}?nocache=${Date.now()}`);
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -156,7 +208,6 @@
             modoBackup = true;
             document.getElementById('avisoBackup').style.display = 'block';
             actualizarTodoDashboard();
-            // Cerrar el panel lateral
             document.getElementById('panelBackup').classList.remove('open');
         } catch (err) {
             alert("Error al cargar backup: " + err.message);
@@ -174,21 +225,88 @@
         }
     }
 
-    // --------------------------------------------------------------
-    // LISTAR BACKUPS DESDE LA API DE GITHUB
-    // --------------------------------------------------------------
+    function solicitarToken() {
+        const token = prompt("🔑 Introduce tu token de acceso personal de GitHub (con permisos 'repo'):\n\nNo se almacena en ningún servidor, solo en tu navegador.");
+        if (token && token.length > 10) {
+            githubToken = token;
+            localStorage.setItem('github_token', token);
+            return true;
+        }
+        return false;
+    }
+
+    async function guardarBackupManual() {
+        if (!datosActuales.length) {
+            alert("Aún no hay datos cargados. Espera a que termine la carga.");
+            return;
+        }
+        if (!githubToken) {
+            if (!solicitarToken()) return;
+        }
+        const now = new Date();
+        const fechaStr = now.toISOString().slice(0,19).replace(/:/g, '-');
+        const fileName = `OCS_${fechaStr}.csv`;
+        
+        const columnas = ['TAG', 'Último inventario', 'Dispositivo', 'Nombre usuario', 'Sistema Operativo', 'Dirección IP'];
+        const filasCSV = datosActuales.map(row => [
+            row.tag,
+            row.ultimoInventario,
+            row.dispositivo,
+            row.usuario,
+            row.so,
+            row.ip
+        ].map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','));
+        const contenidoCSV = [columnas.join(','), ...filasCSV].join('\n');
+        const encoded = btoa(unescape(encodeURIComponent(contenidoCSV)));
+        
+        const url = `https://api.github.com/repos/${OWNER}/${REPO}/contents/backups/${fileName}`;
+        try {
+            const response = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                    'Authorization': `Bearer ${githubToken}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                },
+                body: JSON.stringify({
+                    message: `Backup manual desde dashboard: ${fileName}`,
+                    content: encoded,
+                    branch: 'main'
+                })
+            });
+            if (response.status === 401 || response.status === 403) {
+                localStorage.removeItem('github_token');
+                githubToken = null;
+                alert("❌ Token inválido o sin permisos. Vuelve a introducir el token correcto (necesita alcance 'repo').");
+                guardarBackupManual();
+                return;
+            }
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.message || `HTTP ${response.status}`);
+            }
+            alert(`✅ Backup guardado correctamente como ${fileName}`);
+            listarBackups();
+        } catch (err) {
+            console.error(err);
+            alert(`❌ Error al guardar backup: ${err.message}`);
+        }
+    }
+
     async function listarBackups() {
         const container = document.getElementById('listaBackups');
         container.innerHTML = 'Cargando backups...';
         try {
             const resp = await fetch(REPO_API);
-            if (!resp.ok) throw new Error('No se pudo acceder a la carpeta backups');
+            if (resp.status === 404) {
+                container.innerHTML = '<p>📁 La carpeta "backups" aún no existe. Los backups automáticos se crearán cada lunes. También puedes crear el primero manualmente con el botón de arriba.</p>';
+                return;
+            }
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
             const files = await resp.json();
-            // Filtrar solo archivos CSV que empiecen por OCS_
             const backups = files.filter(f => f.name.startsWith('OCS_') && f.name.endsWith('.csv'))
-                                 .sort((a,b) => b.name.localeCompare(a.name)); // más reciente primero
+                                 .sort((a,b) => b.name.localeCompare(a.name));
             if (backups.length === 0) {
-                container.innerHTML = '<p>No hay backups aún. El workflow automático los creará cada lunes.</p>';
+                container.innerHTML = '<p>No hay backups aún. Usa el botón "Guardar backup manual" para crear el primero.</p>';
                 return;
             }
             container.innerHTML = backups.map(f => `
@@ -199,13 +317,10 @@
             `).join('');
         } catch (err) {
             console.error(err);
-            container.innerHTML = '<p>Error al listar backups. Asegúrate de que la carpeta "backups" existe.</p>';
+            container.innerHTML = '<p>⚠️ Error al conectar con GitHub. Asegúrate de que la carpeta "backups" existe.</p>';
         }
     }
 
-    // --------------------------------------------------------------
-    // FUNCIONES COMUNES DEL DASHBOARD (estadísticas, gráficos, filtros, tabla)
-    // --------------------------------------------------------------
     function actualizarTodoDashboard() {
         actualizarEstadisticas(datosGlobales);
         actualizarGraficoSO(datosGlobales);
@@ -302,18 +417,15 @@
         const columnas = ['tag', 'dispositivo', 'usuario', 'so', 'ultimoInventario', 'ip'];
         const nombres = { tag:'TAG', dispositivo:'Dispositivo', usuario:'Usuario', so:'S.O.', ultimoInventario:'Último inventario', ip:'IP' };
         const thead = document.getElementById('tableHeader');
-        thead.innerHTML = `<tr>${columnas.map(col => `<th data-column="${col}">${nombres[col]} ${currentSort.column === col ? (currentSort.direction === 'asc' ? '▲' : '▼') : ''}</th>`).join('')}｜｜DSML｜｜`;
+        thead.innerHTML = `<tr>${columnas.map(col => `<th data-column="${col}">${nombres[col]} ${currentSort.column === col ? (currentSort.direction === 'asc' ? '▲' : '▼') : ''}</th>`).join('')}<table>`;
         document.querySelectorAll('#tableHeader th').forEach(th => th.addEventListener('click', () => ordenarPor(th.dataset.column)));
         const tbody = document.getElementById('tableBody');
-        tbody.innerHTML = datos.slice(0, 1000).map(item => `<tr>${columnas.map(col => `<td>${escapeHtml(item[col])}</td>`).join('')}</tr>`).join('');
+        tbody.innerHTML = datos.slice(0, 1000).map(item => `<tr>${columnas.map(col => `<td>${escapeHtml(item[col])}</td>`).join('')}</td>`).join('');
         document.getElementById('recordsInfo').innerHTML = `Mostrando ${datos.length} registros (${modoBackup ? 'histórico' : 'actuales'}) de ${datosGlobales.length} totales`;
     }
 
     function escapeHtml(str) { if(!str) return ''; return str.replace(/[&<>]/g, m => m==='&'?'&amp;': m==='<'?'&lt;': '&gt;'); }
 
-    // --------------------------------------------------------------
-    // EXPORTAR CSV (filtrados)
-    // --------------------------------------------------------------
     document.getElementById('exportCsvBtn').addEventListener('click', () => {
         if (!datosFiltradosActuales.length) { alert('No hay datos para exportar'); return; }
         const columnas = ['tag', 'dispositivo', 'usuario', 'so', 'ultimoInventario', 'ip'];
@@ -330,9 +442,6 @@
 
     document.getElementById('searchInput').addEventListener('input', (e) => { busquedaGlobal = e.target.value; aplicarFiltrosYOrdenacion(); });
 
-    // --------------------------------------------------------------
-    // DETECTOR DE DUPLICADOS (sencillo)
-    // --------------------------------------------------------------
     function abrirModalDuplicados() {
         if (!datosGlobales.length) { alert('Cargando datos...'); return; }
         const container = document.getElementById('columnasCheckbox');
@@ -354,28 +463,32 @@
         const duplicados = Array.from(grupos.entries()).filter(([_,items]) => items.length>1);
         let html = duplicados.length ? `<h3>${duplicados.length} grupos duplicados</h3>` : '<p>No hay duplicados</p>';
         duplicados.forEach(([_,items]) => {
-            html += `<div style="border:1px solid #f97316; margin:10px; padding:10px;"><b>${items.length} registros</b><table style="width:100%; font-size:12px;">`;
+            html += `<div style="border:1px solid #f97316; margin:10px; padding:10px;"><b>${items.length} registros</b><table style="width:100%; font-size:12px;"><thead><tr><th>TAG</th><th>Dispositivo</th><th>Usuario</th><th>SO</th><th>Último inventario</th><th>IP</th></tr></thead><tbody>`;
             items.forEach(item => { html += `<tr>${['tag','dispositivo','usuario','so','ultimoInventario','ip'].map(col => `<td>${escapeHtml(item[col])}</td>`).join('')}</tr>`; });
-            html += `}</div>`;
+            html += `</tbody></div>`;
         });
         document.getElementById('resultadoDuplicados').innerHTML = html;
     });
 
-    // --------------------------------------------------------------
-    // PANEL LATERAL Y LISTADO DE BACKUPS
-    // --------------------------------------------------------------
     const panel = document.getElementById('panelBackup');
     const toggleBtn = document.getElementById('togglePanelBtn');
     toggleBtn.addEventListener('click', () => {
         panel.classList.toggle('open');
         if (panel.classList.contains('open')) listarBackups();
     });
+    document.getElementById('manualBackupBtn').addEventListener('click', guardarBackupManual);
+    document.getElementById('tokenInfoLink').addEventListener('click', (e) => {
+        e.preventDefault();
+        window.open('https://github.com/settings/tokens', '_blank');
+    });
+
     window.cargarBackup = cargarBackup;
     window.restaurarDatosActuales = restaurarDatosActuales;
 
-    // Inicialización
-    cargarDatosActuales();
-    setInterval(cargarDatosActuales, 30000);
+    function iniciarDashboard() {
+        cargarDatosActuales();
+        setInterval(cargarDatosActuales, 30000);
+    }
 </script>
 </body>
 </html>
