@@ -1,0 +1,36 @@
+name: Backup semanal de OCS.csv
+
+on:
+  schedule:
+    # Se ejecuta todos los lunes a las 00:00 UTC
+    - cron: '0 0 * * 1'
+  # También puedes ejecutarlo manualmente desde la pestaña Actions
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Clonar repositorio
+        uses: actions/checkout@v4
+
+      - name: Crear carpeta de backups si no existe
+        run: mkdir -p backups
+
+      - name: Copiar OCS.csv con fecha
+        run: |
+          FECHA=$(date +'%Y-%m-%d')
+          cp OCS.csv "backups/OCS_${FECHA}.csv"
+
+      - name: Configurar git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Commit y push del backup
+        run: |
+          git add backups/
+          git commit -m "Backup semanal OCS.csv - ${FECHA}" || echo "No hay cambios"
+          git push
